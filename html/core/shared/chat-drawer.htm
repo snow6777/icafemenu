@@ -1,0 +1,746 @@
+<div id="chatDrawerRoot" v-cloak>
+	<!-- Backdrop -->
+	<div class="chat-drawer-backdrop" v-if="d.open" @click="close()"></div>
+
+	<!-- Drawer panel -->
+	<div :class="'chat-drawer-panel d-flex ' + (d.open ? 'open' : '')" id="chatDrawerPanel">
+
+		<!-- Left: contacts -->
+		<div class="cd-sidebar d-flex flex-column flex-shrink-0">
+			<div class="cd-sidebar-header d-flex align-items-center flex-shrink-0">
+				<span class="lang flex-grow-1">Contacts</span>
+				<button class="cd-sidebar-icon-btn" @click="toggleMute()"
+					:title="d.mute ? translate_string('Unmute notifications') : translate_string('Mute notifications')">
+					<i class="fa" :class="d.mute ? 'fa-bell-slash' : 'fa-bell'"></i>
+				</button>
+				<button class="cd-sidebar-icon-btn cd-sidebar-close" @click="close()" title="Close">&times;</button>
+			</div>
+			<!-- 单列联系人:staff 在前(letter avatar),member 在后(person 图标);后端已按
+			     staff → online → unread → 字典序 排序;前端只展示在线 + 有未读 的对端 -->
+			<div class="cd-contacts flex-grow-1 overflow-auto">
+				<div class="cd-contact d-flex align-items-center" v-for="c in cdVisibleContacts()" :key="c.prefixed"
+					:class="{active: d.activeContact===c.prefixed}"
+					@click="setContact(c.prefixed)">
+					<div class="cd-avatar position-relative d-flex align-items-center justify-content-center flex-shrink-0 rounded-circle" :style="{background: c.type==='member' ? '#4a5568' : cdAvatarColor(c.account)}">
+						<span v-if="c.type!=='member'">{{c.account[0]?.toUpperCase()||'-'}}</span>
+						<i v-else class="fa fa-user" style="line-height:1;font-size:11px;"></i>
+						<span class="cd-online-dot" :class="c.online ? 'cd-online-dot-on' : 'cd-online-dot-off'"
+							:title="c.online ? translate_string('Online') : translate_string('Offline')"></span>
+					</div>
+					<span class="cd-contact-name flex-grow-1 text-truncate" :title="cdContactListLabel(c)">{{cdContactListLabel(c)}}</span>
+					<span class="cd-badge flex-shrink-0" v-if="c.unread>0">{{c.unread}}</span>
+				</div>
+				<div class="cd-empty-contacts text-center" v-if="cdVisibleContacts().length===0 && !d.loading">
+					<span class="lang">No online contacts</span>
+				</div>
+			</div>
+			<!-- "Add member" 按钮:始终展示,展开输入框新增 member 联系人 -->
+			<div class="cd-add-member position-relative d-none" @click.stop>
+				<button class="cd-add-member-btn lang" @click.stop="startNew()">
+					<i class="fa fa-plus mr-1"></i><span class="lang">Add member</span>
+				</button>
+				<div class="cd-member-picker" v-if="d.memberSugOpen" @click.stop>
+					<input class="cd-add-member-input"
+						v-model="d.composeMemberInput"
+						:placeholder="translate_string('Member account')"
+						@keydown.enter.prevent="addMemberFromInput()"
+						@keydown.escape="d.memberSugOpen=false">
+					<div class="cd-member-sug-list" v-if="cdMemberSuggestions().length > 0">
+						<div class="cd-member-sug-item d-flex align-items-center"
+							v-for="m in cdMemberSuggestions()" :key="m.account"
+							@click.stop="addMemberContact(m.account)">
+							<span>{{m.account}}</span>
+						</div>
+					</div>
+				</div>
+			</div>
+		</div>
+
+		<!-- Right: chat panel -->
+		<div class="cd-panel d-flex flex-column flex-grow-1" @click="closeDropdown()">
+			<!-- 未选中联系人时:占位提示 -->
+			<div v-if="!d.activeContact" class="cd-empty d-flex flex-column align-items-center justify-content-center flex-grow-1">
+				<i class="fa fa-comments" style="font-size:40px;"></i>
+				<span class="lang">Select a contact to start chatting</span>
+			</div>
+
+			<!-- 选中联系人时:头部 + 消息流 + compose -->
+			<template v-if="d.activeContact">
+				<!-- Header -->
+				<div class="cd-panel-header d-flex align-items-center flex-shrink-0">
+					<div class="cd-avatar d-flex align-items-center justify-content-center flex-shrink-0 rounded-circle" :style="{background: cdAvatarColor(cdActiveAccount())}" style="width:24px;height:24px;font-size:10px;">
+						<span>{{cdActiveAccount()[0]?.toUpperCase()||'-'}}</span>
+					</div>
+					<span class="cd-panel-title flex-grow-1 text-truncate" :title="cdContactLabel(cdActiveContact()) || cdActiveAccount()">{{cdContactLabel(cdActiveContact()) || cdActiveAccount()}}</span>
+				</div>
+
+				<!-- Messages -->
+				<div class="cd-messages flex-grow-1 overflow-auto d-flex flex-column" id="cdMessages">
+					<div class="cd-spinner d-flex align-items-center justify-content-center flex-grow-1" v-if="d.convLoading">
+						<i class="fa fa-spinner fa-spin" style="font-size:20px;"></i>
+					</div>
+					<div v-if="!d.convLoading" class="d-flex flex-column flex-grow-1">
+						<div class="cd-empty d-flex flex-column align-items-center justify-content-center flex-grow-1" v-if="cdFiltered().length===0">
+							<i class="fa fa-comments" style="font-size:30px;"></i>
+							<span class="lang">No messages</span>
+						</div>
+						<div v-for="(item, idx) in cdFiltered()">
+							<div class="cd-date-divider text-center position-relative" v-if="idx===0 || cdDateDiv(item)!==cdDateDiv(cdFiltered()[idx-1])">
+								<span class="position-relative">{{cdDateDiv(item)}}</span>
+							</div>
+							<div class="cd-bubble-row d-flex" :class="item.is_sent ? 'sent align-self-end flex-row-reverse' : 'received align-self-start'">
+								<div v-if="!item.is_sent" class="cd-bav d-flex align-items-center justify-content-center flex-shrink-0 rounded-circle align-self-end" :style="{background: cdAvatarColor(cdAccountOf(item.from))}">
+									{{cdAccountOf(item.from)[0]?.toUpperCase()||'-'}}
+								</div>
+								<div class="cd-bbody d-flex flex-column">
+									<div class="cd-btext">{{item.message}}</div>
+									<div class="cd-btime" :class="{'text-right': item.is_sent}">
+										{{cdFmtTime(item.log_date_local)}}
+										<i v-if="item.is_sent && item.failed" class="fa fa-exclamation-circle cd-bfailed"
+											:title="translate_string('Failed to send')"></i>
+										<i v-else-if="item.is_sent" class="fa cd-bcheck"
+											:class="item.read_at > 0 ? 'fa-check-double cd-bcheck-read' : 'fa-check'"
+											:title="item.read_at > 0 ? translate_string('Read') : translate_string('Sent')"></i>
+									</div>
+								</div>
+							</div>
+						</div>
+					</div>
+				</div>
+
+				<!-- Compose:单聊,只发给 activeContact -->
+				<div class="cd-compose d-flex align-items-center flex-shrink-0">
+					<input class="cd-compose-input flex-grow-1" type="text" v-model="d.composeText"
+						@keydown.enter="send()"
+						:placeholder="translate_string('Type a message...')">
+					<button class="cd-send-btn d-flex align-items-center justify-content-center flex-shrink-0 rounded-circle" @click="send()"
+						:disabled="d.sending || !d.composeText.trim()">
+						<i class="fa" :class="d.sending ? 'fa-spinner fa-spin' : 'fa-paper-plane'" style="font-size:13px;"></i>
+					</button>
+				</div>
+			</template>
+		</div>
+	</div>
+</div>
+
+<script>
+(function(){
+	const PREFIX_STAFF = 'staff-';
+	const PREFIX_MEMBER = 'member-';
+	function me() {
+		const acct = (typeof thePCStatus !== 'undefined' && thePCStatus.member_account) || '';
+		return acct ? (PREFIX_MEMBER + acct) : '';
+	}
+	function prefixOf(prefixed) {
+		if (!prefixed) return '';
+		if (prefixed.indexOf(PREFIX_STAFF) === 0) return PREFIX_STAFF;
+		if (prefixed.indexOf(PREFIX_MEMBER) === 0) return PREFIX_MEMBER;
+		return '';
+	}
+	function typeOf(prefixed) {
+		const p = prefixOf(prefixed);
+		return p === PREFIX_STAFF ? 'staff' : (p === PREFIX_MEMBER ? 'member' : '');
+	}
+	function cdAccountOf(prefixed) {
+		const p = prefixOf(prefixed);
+		return p ? prefixed.substring(p.length) : (prefixed || '');
+	}
+	function makePrefixed(type, account) {
+		return (type === 'member' ? PREFIX_MEMBER : PREFIX_STAFF) + account;
+	}
+
+	// ── State ──────────────────────────────────────────
+	const chatD = PetiteVue.reactive({
+		open: false,
+		activeContact: '',           // prefixed account; 空表示未选中
+		contacts: [],                // [{prefixed, type, account, unread, online}]
+		activeMessages: [],          // 当前选中联系人的会话流
+		composeText: '',
+		composeMemberInput: '',
+		memberSugOpen: false,
+		loading: false,              // contacts 列表加载中(用户主动打开抽屉时)
+		convLoading: false,          // 单聊会话加载中(独立于 loading,避免活动会话因 contacts 软刷新闪屏)
+		sending: false,
+		lastSentAt: 0,        // 1s 前端频率限制用
+		totalUnread: 0,
+		mute: localStorage.getItem('chat_mute') === '1',  // 静音通知(toast/admin-message 提示音)
+		pendingContact: null,        // theChat.open(contact) 时暂存,cdLoad 完毕后自动跳转
+	});
+
+	const CD_COLORS = ['#3182ce','#38a169','#d69e2e','#e53e3e','#805ad5','#dd6b20'];
+
+	function cdAvatarColor(name) {
+		if (!name) return '#718096';
+		let h = 0;
+		for (let i = 0; i < name.length; i++) h = name.charCodeAt(i) + ((h << 5) - h);
+		return CD_COLORS[Math.abs(h) % CD_COLORS.length];
+	}
+
+	function cdFmtTime(s) {
+		if (!s) return '';
+		const d = new Date(s.replace(' ', 'T'));
+		if (isNaN(d)) return s;
+		let h = d.getHours(), m = d.getMinutes();
+		const ap = h >= 12 ? 'PM' : 'AM';
+		h = h % 12 || 12;
+		const t = h + ':' + (m < 10 ? '0' + m : m) + ' ' + ap;
+		return d.toDateString() === new Date().toDateString()
+			? t
+			: ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][d.getMonth()] + ' ' + d.getDate() + ', ' + t;
+	}
+
+	function cdFmtTimeTs(ts) {
+		if (!ts) return '';
+		const d = new Date(ts * 1000);
+		if (isNaN(d)) return '';
+		let h = d.getHours(), m = d.getMinutes();
+		const ap = h >= 12 ? 'PM' : 'AM';
+		h = h % 12 || 12;
+		return h + ':' + (m < 10 ? '0' + m : m) + ' ' + ap;
+	}
+
+	function cdDateDiv(msg) {
+		if (!msg || !msg.log_date_local) return '';
+		const d = new Date(msg.log_date_local.replace(' ', 'T'));
+		if (isNaN(d)) return msg.log_date_local.slice(0, 10);
+		const now = new Date();
+		if (d.toDateString() === now.toDateString()) return translate_string('Today');
+		const yest = new Date(now); yest.setDate(now.getDate() - 1);
+		if (d.toDateString() === yest.toDateString()) return translate_string('Yesterday');
+		return ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][d.getMonth()] + ' ' + d.getDate() + ', ' + d.getFullYear();
+	}
+
+	function cdScrollBottom() {
+		setTimeout(() => {
+			const el = document.getElementById('cdMessages');
+			if (el) el.scrollTop = el.scrollHeight;
+		}, 50);
+	}
+
+	// 把未读总数同步到 vueGlobal,layout.htm dropdown 通过它显示红 badge
+	function syncUnreadToGlobal() {
+		if (typeof vueGlobal !== 'undefined') {
+			vueGlobal.chatUnread = chatD.totalUnread;
+		}
+	}
+
+	function normalizeConversation(records) {
+		return (records || []).map(rec => ({
+			log_id: rec.log_id,
+			from: rec.from,
+			to: rec.to,
+			is_sent: !!rec.is_sent,
+			message: rec.message,
+			log_date_local: rec.log_date_local,
+			read_at: rec.read_at || 0,
+		}));
+	}
+
+	// 拉联系人列表 + 未读数
+	//   reset=true:用户主动打开抽屉/手动刷新 → 显示 contacts 区的 spinner
+	//   reset=false:WSS 触发的软刷新 → 不切换 loading,避免活动会话因 contacts 重新装载而闪屏
+	async function cdLoad(reset) {
+		if (!me()) return;
+		if (reset) chatD.loading = true;
+		try {
+			const ret = await theApiClient.callCafeApi('chat/contacts', 'get').catch(()=>null);
+			if (ret) {
+				const incoming = (ret.contacts || []).map(c => ({
+					prefixed: c.prefixed,
+					type: c.type,
+					account: c.account,
+					unread: c.unread || 0,
+					online: c.online,
+					pc_name: c.pc_name || '',
+				}));
+				// 用 in-place 合并代替整体替换,避免 sidebar 视觉跳动 + activeContact 联系人被丢弃
+				const incomingByKey = new Map(incoming.map(c => [c.prefixed, c]));
+				for (let i = chatD.contacts.length - 1; i >= 0; i--) {
+					const cur = chatD.contacts[i];
+					if (!incomingByKey.has(cur.prefixed) && cur.prefixed !== chatD.activeContact) {
+						chatD.contacts.splice(i, 1);
+					}
+				}
+				const existingByKey = new Map(chatD.contacts.map(c => [c.prefixed, c]));
+				incoming.forEach(nc => {
+					const cur = existingByKey.get(nc.prefixed);
+					if (cur) {
+						cur.unread = nc.unread;
+						cur.online = nc.online;
+						cur.type = nc.type;
+						cur.account = nc.account;
+						cur.pc_name = nc.pc_name;
+					} else {
+						chatD.contacts.push(nc);
+					}
+				});
+				chatD.totalUnread = (typeof ret.total_unread === 'number')
+					? ret.total_unread
+					: chatD.contacts.reduce((s, c) => s + c.unread, 0);
+				syncUnreadToGlobal();
+			}
+		} catch (e) {
+			console.log('chat-drawer cdLoad error:', e);
+		}
+		if (reset) chatD.loading = false;
+
+		// 自动跳转到指定联系人(theChat.open({prefixed/account, type}) 触发,cdLoad 完毕后执行)
+		if (reset && chatD.pendingContact) {
+			const pending = chatD.pendingContact;
+			chatD.pendingContact = null;
+			let target = pending.prefixed || '';
+			if (!target && pending.account) {
+				target = makePrefixed(pending.type || 'staff', pending.account);
+			}
+			if (target) {
+				if (!chatD.contacts.find(c => c.prefixed === target)) {
+					chatD.contacts.push({
+						prefixed: target,
+						type: typeOf(target),
+						account: cdAccountOf(target),
+						unread: 0,
+						online: null,
+					});
+				}
+				selectContactByPrefixed(target);
+			}
+		}
+	}
+
+	// 切换到指定 prefixed 联系人(供 setContact Vue 方法和 pendingContact 自动跳转复用)
+	function selectContactByPrefixed(prefixed) {
+		if (!prefixed) return;
+		chatD.activeContact = prefixed;
+		chatD.memberSugOpen = false;
+		chatD.activeMessages = [];
+		const c = chatD.contacts.find(x => x.prefixed === prefixed);
+		if (c && c.unread > 0) {
+			chatD.totalUnread = Math.max(0, chatD.totalUnread - c.unread);
+			c.unread = 0;
+			syncUnreadToGlobal();
+		}
+		cdLoadConversation(prefixed);
+	}
+
+	// 拉单聊会话(setContact 触发):后端会自动标记未读 + 推送已读回执
+	async function cdLoadConversation(peerPrefixed) {
+		if (!me() || !peerPrefixed) return;
+		chatD.convLoading = true;
+		try {
+			const ret = await theApiClient.callCafeApi('chat/conversation', 'get', {
+				peer: peerPrefixed,
+				page: 1,
+			}).catch(()=>null);
+			chatD.activeMessages = normalizeConversation(ret && ret.log_list);
+		} catch (e) {
+			console.log('chat-drawer cdLoadConversation error:', e);
+			chatD.activeMessages = [];
+		}
+		chatD.convLoading = false;
+		cdScrollBottom();
+	}
+
+	// ── App ────────────────────────────────────────────
+	PetiteVue.createApp({
+		cdAvatarColor, cdFmtTime, cdFmtTimeTs, cdDateDiv, cdAccountOf, translate_string,
+
+		get d() { return chatD; },
+
+		// 单列展示:只显示在线 + 有未读 的联系人(后端已按 staff → online → unread → 字典序 排序)
+		cdVisibleContacts() {
+			return chatD.contacts.filter(c => c.type === 'staff' && (c.online || (c.unread || 0) > 0));
+		},
+
+		cdFiltered() { return chatD.activeMessages; },
+
+		cdActiveAccount() { return cdAccountOf(chatD.activeContact); },
+		cdActiveContact() { return chatD.contacts.find(c => c.prefixed === chatD.activeContact) || null; },
+		cdContactLabel(c) {
+			if (!c) return '';
+			return c.account + ((c.type === 'member' && c.online && c.pc_name) ? '@' + c.pc_name : '');
+		},
+		cdContactListLabel(c) {
+			if (!c) return '';
+			return (c.type === 'member' && c.pc_name) ? c.pc_name.toUpperCase() : c.account;
+		},
+
+		close() {
+			chatD.open = false;
+			if (typeof vueGlobal !== 'undefined' && vueGlobal.modals) vueGlobal.modals.chatDrawer = false;
+		},
+
+		toggleMute() {
+			chatD.mute = !chatD.mute;
+			try { localStorage.setItem('chat_mute', chatD.mute ? '1' : ''); } catch (e) {}
+		},
+
+		setContact(prefixed) {
+			selectContactByPrefixed(prefixed);
+		},
+
+		// 新增 member 联系人:展开输入框,输入账号后加到联系人列表(单列模式下始终可用)
+		startNew() {
+			chatD.memberSugOpen = !chatD.memberSugOpen;
+			if (chatD.memberSugOpen) {
+				chatD.composeMemberInput = '';
+				PetiteVue.nextTick(() => {
+					const input = document.querySelector('.cd-add-member-input');
+					if (input) input.focus();
+				});
+			}
+		},
+
+		closeDropdown() { chatD.memberSugOpen = false; },
+
+		// 从自动完成下拉选 member 加为联系人
+		addMemberContact(acct) {
+			if (!acct) return;
+			const prefixed = makePrefixed('member', acct);
+			if (prefixed === me()) return;
+			if (!chatD.contacts.find(c => c.prefixed === prefixed)) {
+				chatD.contacts.push({ prefixed, type: 'member', account: acct, unread: 0, online: null });
+			}
+			chatD.memberSugOpen = false;
+			chatD.composeMemberInput = '';
+			this.setContact(prefixed);
+		},
+
+		addMemberFromInput() {
+			const v = (chatD.composeMemberInput || '').trim();
+			if (!v) return;
+			this.addMemberContact(v);
+		},
+
+		send() {
+			const text = chatD.composeText.trim();
+			if (!text || chatD.sending) return;
+			if (!chatD.activeContact) return;
+			// 80 字符上限
+			if (text.length > 80) {
+				toastr.warning(translate_string('Message is too long'));
+				return;
+			}
+			// 1s 前端频率限制
+			const nowMs = Date.now();
+			if (nowMs - chatD.lastSentAt < 1000) return;
+			chatD.lastSentAt = nowMs;
+			const recipient = chatD.activeContact;
+
+			// 立即乐观追加 bubble — 必须先于 chat/send POST,否则:
+			// 接收方收到 chat_message 后 markRead 推送的 chat_read_receipt 可能在
+			// chat/send 响应之前到达,onReadReceipt 会因 bubble 未入列而漏更新,
+			// 导致刚发的消息一直显示 ✓ 而不是 ✓✓
+			const now = new Date();
+			const pad = n => n.toString().padStart(2, '0');
+			const ts = now.getFullYear()+'-'+pad(now.getMonth()+1)+'-'+pad(now.getDate())+' '+
+				pad(now.getHours())+':'+pad(now.getMinutes())+':'+pad(now.getSeconds());
+			// _tempId 跨切换联系人安全识别本气泡 — 切走后 activeMessages 被重置,
+			// 即便 .catch 触发也找不到对应行,避免错误标记其他会话的消息
+			const tempId = 'tmp_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+			chatD.activeMessages.push({
+				log_id: null,
+				_tempId: tempId,
+				from: me(),
+				to: recipient,
+				is_sent: true,
+				message: text,
+				log_date_local: ts,
+				read_at: 0,
+				failed: false,
+			});
+			// 联系人列表中没有则补一个
+			if (!chatD.contacts.find(c => c.prefixed === recipient)) {
+				chatD.contacts.push({
+					prefixed: recipient,
+					type: typeOf(recipient),
+					account: cdAccountOf(recipient),
+					unread: 0,
+					online: null,
+				});
+			}
+			cdScrollBottom();
+			chatD.composeText = '';
+			chatD.sending = true;
+
+			const pcName = (typeof thePCInfo !== 'undefined' && thePCInfo.pc_name) ? thePCInfo.pc_name : '';
+			theApiClient.callCafeApi('chat/send', 'post', {
+				recipients: [recipient],
+				pc_name: pcName,
+				message: text,
+			}).then(() => {
+				chatD.sending = false;
+			}).catch((e) => {
+				chatD.sending = false;
+				console.log('send message failed:', e);
+				// 标记气泡失败 — 通过 _tempId 查找,避免在切换联系人后误标其他会话
+				const i = chatD.activeMessages.findIndex(m => m._tempId === tempId);
+				if (i >= 0) {
+					chatD.activeMessages[i] = Object.assign({}, chatD.activeMessages[i], { failed: true });
+				}
+			});
+		},
+
+		cdMemberSuggestions() {
+			const q = (chatD.composeMemberInput || '').toLowerCase();
+			const existing = new Set(chatD.contacts.filter(c => c.type === 'member').map(c => c.account));
+			// 用 chatD.contacts 中 member 类型的作为来源(后端 contacts 已包含在线 member)
+			return chatD.contacts.filter(c => c.type === 'member' && !existing.has(c.account))
+				.map(c => ({ account: c.account }))
+				.filter(m => !q || m.account.toLowerCase().includes(q))
+				.slice(0, 8);
+		},
+	}).mount('#chatDrawerRoot');
+
+	// ── 全局接口 ────────────────────────────────────────
+	window.theChat = {
+		get d() { return chatD; },
+		get totalUnread() { return chatD.totalUnread; },
+		get mute() { return !!chatD.mute; },
+		// 是否正在抽屉里查看与某 prefixed 联系人的会话(供 listen.js 决定是否抑制 toast/提示音)
+		isViewing(prefixed) { return !!(chatD.open && prefixed && chatD.activeContact === prefixed); },
+		// 可选参数 contact = { prefixed } 或 { type:'staff'|'member', account }
+		// 传入时打开抽屉后自动选中并加载该联系人的会话
+		open(contact) {
+			if (contact) chatD.pendingContact = contact;
+			chatD.open = true;
+			cdLoad(true);
+		},
+		close() {
+			chatD.open = false;
+		},
+		// 收到 remind 等需要刷新联系人时调用(软刷新,不切换 loading)
+		refresh() {
+			cdLoad(false);
+		},
+		// 收到 chat_read_receipt remind 时由 listen.js 调用
+		// data: { reader, read_at } — reader 读了我们发出去的消息
+		onReadReceipt(data) {
+			if (!data || !data.reader) return;
+			const reader = data.reader;
+			const readAt = parseInt(data.read_at || 0, 10);
+			if (!readAt) return;
+			// 用数组索引替换确保 PetiteVue 必然检测到 mutation,即便接收方当前不在看该会话也更新本地缓存
+			let updated = false;
+			for (let i = 0; i < chatD.activeMessages.length; i++) {
+				const m = chatD.activeMessages[i];
+				if (m.to === reader && (!m.read_at || m.read_at < readAt)) {
+					chatD.activeMessages[i] = Object.assign({}, m, { read_at: readAt });
+					updated = true;
+				}
+			}
+			if (updated) cdScrollBottom();
+		},
+		// 收到 chat_message WSS 时由 listen.js 调用
+		// data: { from, to, text } — from/to 是 prefixed 账号
+		onIncomingMessage(data) {
+			if (!data || !data.from || !data.text) return;
+			const sender = data.from;
+			const senderType = typeOf(sender);
+			if (!senderType) return;
+			const senderAccount = cdAccountOf(sender);
+			const isCurrentlyViewing = chatD.open && chatD.activeContact === sender;
+
+			if (isCurrentlyViewing) {
+				const now = new Date();
+				const pad = n => n.toString().padStart(2, '0');
+				const ts = now.getFullYear()+'-'+pad(now.getMonth()+1)+'-'+pad(now.getDate())+' '+
+					pad(now.getHours())+':'+pad(now.getMinutes())+':'+pad(now.getSeconds());
+				chatD.activeMessages.push({
+					log_id: null,
+					from: sender,
+					to: me(),
+					is_sent: false,
+					message: data.text,
+					log_date_local: ts,
+					read_at: 1,
+				});
+				cdScrollBottom();
+				// 后端 chat_message push 早于 DB write 完成,触发一次 markRead 让对方收到回执
+				theApiClient.callCafeApi('chat/markRead', 'post', { sender }).catch(() => {});
+				return;
+			}
+
+			// 不在看该会话:维护联系人 + 未读
+			let c = chatD.contacts.find(x => x.prefixed === sender);
+			if (!c) {
+				c = { prefixed: sender, type: senderType, account: senderAccount, unread: 0, online: null };
+				chatD.contacts.push(c);
+			}
+			c.unread = (c.unread || 0) + 1;
+			chatD.totalUnread = (chatD.totalUnread || 0) + 1;
+			syncUnreadToGlobal();
+		},
+		// 会员登出时清空聊天状态，防止下一个登录的会员看到上一会话的记录
+		reset() {
+			chatD.activeMessages = [];
+			chatD.contacts = [];
+			chatD.activeContact = '';
+			chatD.totalUnread = 0;
+			chatD.open = false;
+			chatD.composeText = '';
+			chatD.pendingContact = null;
+			syncUnreadToGlobal();
+		},
+	};
+
+})();
+</script>
+
+<style>
+:root {
+	--cd-bg: #1a1d24;
+	--cd-bg-dark: #14161c;
+	--cd-surface: #232830;
+	--cd-hover: #2c323e;
+	--cd-border: #3a4150;
+	--cd-text: #d0d5dc;
+	--cd-text-hi: #ffffff;
+	--cd-muted: #8a93a4;
+	--cd-accent: #58a6ff;
+	--cd-send: #1f6feb;
+	--cd-danger: #e53e3e;
+}
+.chat-drawer-backdrop {
+	position: fixed;
+	inset: 0;
+	background: rgba(0,0,0,0.45);
+	z-index: 2000;
+	cursor: pointer;
+}
+.chat-drawer-panel {
+	position: fixed;
+	top: 0; right: 0; bottom: 0;
+	width: 560px;
+	max-width: 100vw;
+	z-index: 2001;
+	background: var(--cd-bg);
+	border-left: 1px solid var(--cd-border);
+	box-shadow: -4px 0 24px rgba(0,0,0,0.5);
+	transform: translateX(100%);
+	transition: transform 0.22s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.chat-drawer-panel.open { transform: translateX(0); }
+.cd-sidebar { width: 150px; background: var(--cd-bg-dark); border-right: 1px solid var(--cd-border); overflow: hidden; }
+.cd-sidebar-header {
+	padding: 10px 12px 8px;
+	font-size: 10px;
+	font-weight: 600;
+	color: var(--cd-muted);
+	text-transform: uppercase;
+	letter-spacing: 0.06em;
+}
+.cd-sidebar-icon-btn { background: none; border: none; color: var(--cd-muted); cursor: pointer; padding: 0 4px; line-height: 1; font-size: 14px; display: inline-flex; align-items: center; justify-content: center; }
+.cd-sidebar-icon-btn:hover { color: var(--cd-text-hi); }
+.cd-sidebar-close { font-size: 18px; }
+.cd-contact { gap: 7px; padding: 8px 10px; cursor: pointer; border-left: 3px solid transparent; }
+.cd-contact:hover { background: var(--cd-hover); }
+.cd-contact.active { background: var(--cd-hover); border-left-color: var(--cd-accent); }
+.cd-avatar { width: 26px; height: 26px; font-size: 11px; font-weight: 700; color: #fff; line-height: 1; }
+.cd-online-dot {
+	position: absolute;
+	right: -1px;
+	bottom: -1px;
+	width: 8px;
+	height: 8px;
+	border-radius: 50%;
+	border: 1.5px solid var(--cd-bg-dark);
+	box-sizing: content-box;
+}
+.cd-online-dot-on  { background: #2ecc71; }
+.cd-online-dot-off { background: #6c7080; }
+.cd-contact-name { font-size: 12px; color: var(--cd-text); min-width: 0; }
+.cd-badge { background: var(--cd-danger); color: #fff; border-radius: 10px; padding: 1px 5px; font-size: 10px; font-weight: 600; }
+.cd-panel { min-width: 0; overflow: hidden; }
+.cd-panel-header { padding: 9px 12px; border-bottom: 1px solid var(--cd-border); gap: 8px; }
+.cd-panel-title { font-size: 13px; font-weight: 600; color: var(--cd-text-hi); }
+.cd-messages { padding: 12px; gap: 8px;overflow:auto;}
+.cd-date-divider { font-size: 10px; color: var(--cd-border); margin: 2px 0; }
+.cd-date-divider span { background: var(--cd-bg); padding: 0 8px; z-index: 1; position: relative; }
+.cd-date-divider::before {
+	content: ''; position: absolute; left: 0; right: 0; top: 50%;
+	height: 1px; background: var(--cd-border);
+}
+.cd-bubble-row { gap: 6px; max-width: 100%; }
+.cd-bav { width: 24px; height: 24px; font-size: 10px; font-weight: 700; color: #fff; }
+.cd-bmeta { font-size: 10px; color: var(--cd-muted); margin-bottom: 2px; }
+.cd-btext { padding: 7px 11px; border-radius: 12px; font-size: 12px; line-height: 1.45; word-break: break-word; }
+.cd-bubble-row.received .cd-btext { background: var(--cd-surface); color: var(--cd-text-hi); border-radius: 4px 12px 12px 12px; }
+.cd-bubble-row.sent .cd-btext { background: var(--cd-send); color: #fff; border-radius: 12px 4px 12px 12px; }
+.cd-btime { font-size: 10px; color: var(--cd-muted); margin-top: 2px; }
+.cd-bcheck { font-size: 10px; line-height: 1; margin-left: 3px; vertical-align: -1px; color: var(--cd-muted); }
+.cd-bcheck-read { color: var(--cd-accent); }
+.cd-bfailed { font-size: 10px; line-height: 1; margin-left: 3px; vertical-align: -1px; color: var(--cd-danger); }
+.cd-bto { font-size: 10px; color: var(--cd-muted); margin-top: 1px; }
+.cd-compose { padding: 8px 10px; border-top: 1px solid var(--cd-border); background: var(--cd-bg-dark); gap: 6px; }
+.cd-to-btn {
+	background: var(--cd-surface); border: 1px solid var(--cd-border);
+	color: var(--cd-muted); border-radius: 4px;
+	padding: 4px 8px; font-size: 11px; cursor: pointer; white-space: nowrap;
+}
+.cd-to-btn:hover, .cd-to-btn.open { border-color: var(--cd-accent); color: var(--cd-accent); }
+.cd-to-dropdown {
+	position: absolute; bottom: 50px; left: 10px;
+	background: var(--cd-surface); border: 1px solid var(--cd-border);
+	border-radius: 6px; padding: 4px 0; min-width: 160px;
+	z-index: 200; box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+	max-height: 240px; overflow-y: auto;
+}
+.cd-to-dropdown label { gap: 7px; padding: 5px 12px; cursor: pointer; font-size: 12px; color: var(--cd-text); margin: 0; }
+.cd-to-dropdown label:hover { background: var(--cd-hover); }
+.cd-compose-input {
+	background: var(--cd-surface); border: 1px solid var(--cd-border);
+	color: var(--cd-text-hi); border-radius: 16px;
+	padding: 6px 12px; font-size: 12px; outline: none;
+}
+.cd-compose-input:focus { border-color: var(--cd-accent); }
+.cd-compose-input::placeholder { color: var(--cd-border); }
+.cd-compose-input:disabled { background: var(--cd-bg-dark); color: var(--cd-muted); cursor: not-allowed; opacity: 0.7; }
+.cd-send-btn { background: var(--cd-send); border: none; color: #fff; width: 30px; height: 30px; cursor: pointer; }
+.cd-send-btn:hover { background: #388bfd; }
+.cd-send-btn:disabled { background: var(--cd-border); cursor: not-allowed; }
+.cd-empty { gap: 6px; color: var(--cd-border); font-size: 13px; align-items: center; justify-content: center; padding: 24px; text-align: center; }
+.cd-empty-contacts { padding: 12px; color: var(--cd-muted); font-size: 11px; }
+.cd-spinner { color: var(--cd-muted); }
+.cd-add-member { padding: 6px; border-top: 1px solid var(--cd-border); background: var(--cd-bg-dark); }
+.cd-add-member-btn {
+	width: 100%; background: var(--cd-surface);
+	border: 1px dashed var(--cd-border); color: var(--cd-muted);
+	border-radius: 4px; padding: 5px 8px;
+	font-size: 11px; cursor: pointer;
+}
+.cd-add-member-btn:hover { border-color: var(--cd-accent); color: var(--cd-accent); }
+.cd-member-picker {
+	position: absolute; bottom: calc(100% + 4px); left: 6px; right: 6px;
+	background: var(--cd-surface); border: 1px solid var(--cd-border);
+	border-radius: 6px; padding: 6px;
+	z-index: 200; box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+}
+.cd-add-member-input {
+	width: 100%; background: var(--cd-bg-dark);
+	border: 1px solid var(--cd-border); color: var(--cd-text-hi);
+	border-radius: 4px; padding: 4px 8px;
+	font-size: 11px; outline: none;
+}
+.cd-add-member-input:focus { border-color: var(--cd-accent); }
+.cd-add-member-input::placeholder { color: var(--cd-border); }
+.cd-member-sug-list {
+	margin-top: 6px; padding-top: 4px;
+	border-top: 1px solid var(--cd-border);
+	max-height: 200px; overflow-y: auto;
+}
+.cd-member-sug-item { padding: 5px 10px; font-size: 11px; color: var(--cd-text); cursor: pointer; }
+.cd-member-sug-item:hover { background: var(--cd-hover); color: var(--cd-text-hi); }
+
+/* 隐藏滚动条（保留滚动功能） */
+.chat-drawer-panel .cd-contacts,
+.chat-drawer-panel .cd-messages,
+.chat-drawer-panel .cd-to-dropdown,
+.chat-drawer-panel .cd-member-sug-list {
+	scrollbar-width: none;
+	-ms-overflow-style: none;
+}
+.chat-drawer-panel .cd-contacts::-webkit-scrollbar,
+.chat-drawer-panel .cd-messages::-webkit-scrollbar,
+.chat-drawer-panel .cd-to-dropdown::-webkit-scrollbar,
+.chat-drawer-panel .cd-member-sug-list::-webkit-scrollbar { display: none; }
+</style>

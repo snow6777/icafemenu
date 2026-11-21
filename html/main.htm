@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+	<title class="lang">iCafeMenu</title>
+
+	<script>
+	// main.htm 自身版本标记。main.htm 是顶层导航文档，之前发现它的响应头没有任何 Cache-Control
+	// （只有 Last-Modified/ETag），CEF/浏览器磁盘缓存完全可能吃到旧版本而不发请求验证——这行日志
+	// 第一时间打印出来，能直接判断当前跑的是不是最新代码，而不用去猜是不是缓存问题。
+	// __version__ 由 api/build-assets.sh 在发布时替换成 git short hash，无需手工维护。
+	console.log('[main.htm] build: ?eda4b42950');
+
+	// build-assets.sh 只替换 CP_HTML/CLIENT_HTML 清单里的 .htm 文件内容，从不处理 .js 文件——
+	// 如果哪个 core/shared/*.js 需要在运行时动态拼一个带缓存戳的 URL（比如用 createElement('script')
+	// 加载某个文件，不是写死在 .htm 里的静态 <script src>），不能自己在 .js 里硬编码字面量
+	// '?eda4b42950'，那段文字永远不会被替换成真正的 hash，缓存戳形同虚设。统一从这里读，这一行
+	// 本身在 .htm 文件里，能被正常替换。
+	window.__ASSET_VERSION_QS__ = '?eda4b42950';
+
+	// 放在所有其他脚本之前，捕捉js报错时的堆栈
+	(function() {
+		// 保存原始的 console.error
+		var originalConsoleError = console.error;
+
+		// 重写 console.error
+		console.error = function() {
+			var args = Array.prototype.slice.call(arguments);
+
+			// 如果有Error对象，获取堆栈
+			for (var i = 0; i < args.length; i++) {
+				if (args[i] instanceof Error && args[i].stack) {
+					// 将堆栈信息也包含在输出中
+					args.push('\nStack Trace:');
+					args.push(args[i].stack);
+					break;
+				}
+			}
+
+			// 调用原始函数
+			originalConsoleError.apply(console, args);
+		};
+
+		// 全局错误处理——把 filename/lineno/colno 也打出来，同源脚本的报错能看到具体是哪个文件哪一行；
+		// 如果这几个字段也是空的、message 固定是 "Script error."，那就是浏览器对跨源脚本的标准脱敏行为，
+		// 说明抛错的脚本和当前页面不同源（比如经过了跨域重定向）
+		window.addEventListener('error', function(event) {
+			var msg = event.message || 'Unknown error';
+			var stack = event.error ? event.error.stack : 'No stack trace';
+			console.error('Uncaught Error:', msg,
+				'\nFile:', event.filename || '(empty - likely cross-origin script)',
+				'\nLine:', event.lineno, 'Col:', event.colno,
+				'\nStack:', stack);
+		});
+
+		// Promise错误处理
+		window.addEventListener('unhandledrejection', function(event) {
+			var reason = event.reason;
+			var stack = reason && reason.stack ? reason.stack : 'No stack trace';
+			console.error('Unhandled Promise Rejection:', reason, '\nStack:', stack);
+		});
+	})();
+
+	// 远程化改造：这个页面现在被集中托管，同一份代码服务所有网吧，不再假设 js/icafe.js 是随包携带的本地文件。
+	// icafemenu.exe 通过 query string 把浏览器拿不到的本机信息（icafe_id/pc_name/mac/ip）传进来，
+	// 页面自己请求 gamecenter.php 拿分片信息和 t/sid，再动态加载 icafe.js/locale.js/core 脚本。
+	// 这套自举参数只在这里用一次，用完存進 window.theBootstrap 供 core/js/wss-client.js 使用。
+
+	// core.js / jquery.js 改成静态 <script> 标签（见下面），页面一解析到就立刻并行下载，比放进 bootstrap()
+	// 里的 await loadScript() 串行链更快。
+	</script>
+	<script src="core/lib/jquery.js"></script>
+	<script src="core/core.js?eda4b42950"></script>
+	<!-- helper.js 原来是两个主题各自 main.htm 脚本列表里的一份，主题加载完才会被拉取；它本身
+	     没有任何开机阶段的早绑定要求（顶层代码只有两个 throttle(...) 构造，不读 theSettings 等
+	     外部状态），改成这里静态加载一次，两个主题的脚本列表里都要同步删掉这条引用，否则会被
+	     加载两次，helper.js 里的顶层 const 声明在两个 <script> 标签间会因为重复声明报
+	     SyntaxError（跟 var/function 不同，顶层 const/let 跨 <script> 标签共享同一个全局
+	     词法环境，不能重复声明） -->
+	<script src="core/js/helper.js?eda4b42950"></script>
+	<!-- apiclient.js 的顶层代码要读 icafe.js 定义的 theSettings/theCafe，必须等 icafe.js 先执行完，
+	     但"字节下载"本身跟 icafe.js 没有先后关系——用 preload 提前把它塞进 HTTP 缓存，真正
+	     loadScript() 的那一刻直接命中缓存，不用再等一次网络往返。preload 与下面 loadScript() 用的是
+	     同一个 __version__ 字面量，发布时被同一次替换改写，不可能再像以前那样漂移导致预取白做 -->
+	<link rel="preload" as="script" href="core/apiclient.js?eda4b42950">
+	<!-- 开机引导逻辑（分支 A/B 判断、加载 icafe.js/apiclient.js/语言包、拉主题、并行预取脚本等）
+	     原来直接内联在这里，300 多行，现在搬到 core/shared/bootstrap.js。它依赖上面
+	     window.__ASSET_VERSION_QS__ 和 jquery.js/core.js 已经加载完成，顺序不能提前 -->
+	<script src="core/shared/bootstrap.js?eda4b42950"></script>
+</head>
+
+<body style="background-color: black" ondragstart="return false" onselectstart = "return false">
+	<style>
+		/* 纯 opacity 动画：libcef 以 --disable-gpu --disable-gpu-compositing 启动，GPU 合成完全禁用，
+		   全部走软件渲染路径，transform/filter 类动画在这条路径上开销明显更高，opacity 才有快速路径 */
+		@keyframes boot_loading_pulse {
+			0%, 80%, 100% { opacity: 0.2; }
+			40% { opacity: 1; }
+		}
+		/* id="main_body" 原来直接就是 <body> 本身——CSS 规范里有条特殊规则：body 的背景即使自己的
+		   盒子没有高度，也会被浏览器传播到整个画布（viewport）上绘制，不受 body 实际内容高度影响。
+		   现在 id="main_body" 挪到了普通的内层 div 上，不再享受这条 body→canvas 的特殊传播规则。
+		   主题自己的 .theme-body 类用的是 height:100%（相对父元素百分比），而百分比高度要求父元素
+		   有"确定"的高度才能正确解析——min-height 不算确定高度，必须是 height 本身，所以这里直接用
+		   height:100vh（视口相对单位，不依赖任何祖先元素是否设置了高度，最稳妥），不能只写 min-height */
+		#main_body {
+			height: 100vh;
+			width: 100%;
+		}
+		/* 浏览器默认给 body 一个 margin（多数 UA 样式表是 8px），#main_body 又是 100vh 高——
+		   body 自己的默认外边距叠加子元素的 100vh，总高度就比视口多出这圈 margin，刚进页面
+		   （主题自己的 CSS reset 还没加载生效前）会先看见一条纵向滚动条一闪而过。主题的
+		   css/style.css 里其实也有 html,body{height:100%}，但那是加载完主题后才生效，这里
+		   直接把 margin 清零，保证从第一帧开始就不依赖主题 CSS 是否加载完 */
+		body {
+			margin: 0;
+		}
+	</style>
+	<!-- 引导阶段（拿 t/sid、动态生成 icafe.js、拉主题、拉页面片段）之前是纯黑屏，这里给一个最简单的
+	     loading 动画占位；引导流程本身不依赖它，出错时 showBootMessage()/直接改 document.body.innerHTML
+	     会把它和下面的 #main_body 一起整体替换掉，不需要额外处理。真正的 UI 就绪时由
+	     core/shared/theme-bootstrap.js 里的 loadThemeBootstrap() 在页面片段+initApp()+主题额外脚本
+	     全部加载完之后统一调用 window.hideBootLoading() 隐藏它 -->
+	<div id="boot_loading" style="position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:#000;z-index:99999;">
+		<div style="display:flex;gap:8px;">
+			<div style="width:10px;height:10px;border-radius:50%;background:#999;animation:boot_loading_pulse 1.2s ease-in-out infinite;"></div>
+			<div style="width:10px;height:10px;border-radius:50%;background:#999;animation:boot_loading_pulse 1.2s ease-in-out infinite;animation-delay:0.2s;"></div>
+			<div style="width:10px;height:10px;border-radius:50%;background:#999;animation:boot_loading_pulse 1.2s ease-in-out infinite;animation-delay:0.4s;"></div>
+		</div>
+	</div>
+	<div id="main_body" class="bs-c bp-c br-n ba-f text-gray"></div>
+	<script>
+		window.hideBootLoading = function() {
+			const el = document.getElementById('boot_loading');
+			if (el) el.remove();
+		};
+	</script>
+</body>
+</html>

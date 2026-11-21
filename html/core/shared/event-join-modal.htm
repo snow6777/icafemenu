@@ -1,0 +1,33 @@
+<!-- st:modal:join_event -->
+<!-- 加入 Event 二维码。静态码只带 cafe_id + event_id，谁扫谁参加；加入成功后由 WSS
+     event_join_status 通知本机刷新列表并关窗 -->
+<div class="modal myModalJoinEvent" tabindex="-1" role="dialog" aria-hidden="true"
+	 data-backdrop="static" data-keyboard="false"
+	 :class="{show: vueGlobal.modals.joinEvent}"
+	 :style="{display: vueGlobal.modals.joinEvent ? 'block' : 'none'}">
+	<div class="modal-dialog modal-dialog-centered" role="document">
+		<div class="modal-content">
+			<div class="modal-header">
+				<h5 class="modal-title lang">Join event</h5>
+				<button type="button" class="close" @click="theEventJoinQr.close()" aria-label="Close">
+					<span aria-hidden="true">&times;</span>
+				</button>
+			</div>
+			<div class="modal-body text-center">
+				<div class="mb-1" style="font-size:15px;font-weight:600;word-break:break-all;">{{vueEventJoin.eventName}}</div>
+				<div class="text-muted small lang mb-3">Scan with the iCafeApp to join this event</div>
+
+				<!-- 二维码是静态的，底色恒为纯白保证可扫 -->
+				<div class="p-2 rounded" style="display:inline-block;width:212px;height:212px;background:#fff;">
+					<div id="event_join_qr"></div>
+				</div>
+
+				<!-- 收费活动提前把票价摆出来，免得用户扫完才发现要扣钱 -->
+				<div class="text-muted small mt-3" :style="{display: vueEventJoin.ticketPrice > 0 ? 'block' : 'none'}">
+					{{translate_string('Ticket price')}}: {{vueEventJoin.currency}} {{vueEventJoin.ticketPrice}}
+				</div>
+			</div>
+		</div>
+	</div>
+</div>
+<!-- ed:modal:join_event -->

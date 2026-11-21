@@ -1,0 +1,77 @@
+<!-- st:modal:bind_app -->
+<!-- 会员绑定 App 账号二维码。条件分支里的文案用 translate_string 插值：lang 类只在 boot 末尾
+     扫一次 DOM，动态出现的节点不会被重新翻译 -->
+<div class="modal myModalBindApp" tabindex="-1" role="dialog" aria-hidden="true"
+	 data-backdrop="static" data-keyboard="false"
+	 :class="{show: vueGlobal.modals.bindApp}"
+	 :style="{display: vueGlobal.modals.bindApp ? 'block' : 'none'}">
+	<div class="modal-dialog modal-dialog-centered" role="document">
+		<div class="modal-content">
+			<div class="modal-header">
+				<h5 class="modal-title lang">Bind app account</h5>
+				<button type="button" class="close" @click="theMemberBind.close()" aria-label="Close">
+					<span aria-hidden="true">&times;</span>
+				</button>
+			</div>
+			<div class="modal-body text-center">
+
+				<!-- 绑定态切换一律用 :style 的 display，不能套 v-if 或 template v-if：
+				     里面的二维码遮罩自己带 v-if，外面再包一层结构指令会让 petite-vue 在
+				     外层条件变化时对已分离的锚点 insertBefore，直接崩（见项目 CLAUDE.md） -->
+
+				<!-- 查绑定状态期间：两套布局都不出，只转圈，免得先闪一下二维码再跳到已绑定 -->
+				<div class="py-5" :style="{display: vueMemberBind.checking ? 'block' : 'none'}">
+					<div class="spinner-border spinner-border-sm text-secondary" role="status"></div>
+				</div>
+
+				<!-- 已绑定：不再出码，只告诉用户绑到了哪个 App 账号 -->
+				<div :style="{display: !vueMemberBind.checking && vueMemberBind.bound ? 'block' : 'none'}">
+					<i class="fal fa-check-circle text-success" style="font-size:44px;"></i>
+					<div class="small mt-2">{{translate_string('Already linked to')}}</div>
+					<div class="mt-1" style="font-size:15px;font-weight:600;word-break:break-all;">{{vueMemberBind.boundEmail || vueMemberBind.boundName}}</div>
+					<div class="text-muted small mt-1" :style="{display: vueMemberBind.boundEmail && vueMemberBind.boundName ? 'block' : 'none'}">{{vueMemberBind.boundName}}</div>
+					<div class="text-muted small mt-2" :style="{display: vueMemberBind.boundAt ? 'block' : 'none'}">{{vueMemberBind.boundAt}}</div>
+				</div>
+
+				<div class="text-muted small lang mb-3" :style="{display: !vueMemberBind.checking && !vueMemberBind.bound ? 'block' : 'none'}">Scan with the iCafeApp to link this account</div>
+
+				<!-- 底色跟登录页扫码区一致：出码时纯白保证可扫，loading/过期时换成淡淡的半透明白，
+				     贴着主题深色底走，不用硬邦邦的黑块。display 也在这里切，故不用 d-inline-block
+				     （那个是 !important，会盖过 display 绑定） -->
+				<div class="position-relative p-2 rounded"
+					 :style="{display: !vueMemberBind.checking && !vueMemberBind.bound ? 'inline-block' : 'none', width:'196px', height:'196px', background: !vueMemberBind.loading && !vueMemberBind.expired ? '#fff' : 'rgba(255,255,255,0.1)'}">
+					<div id="member_bind_qr"></div>
+
+					<!-- 已扫描：等待手机确认 -->
+					<div v-if="vueMemberBind.status === 'scanned'" class="position-absolute d-flex flex-column align-items-center justify-content-center text-center p-2" style="top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.65);border-radius:4px;">
+						<i class="fal fa-mobile-alt text-white mb-2" style="font-size:22px;"></i>
+						<div class="text-white small">{{vueMemberBind.statusText}}</div>
+					</div>
+					<!-- 已绑定 -->
+					<div v-if="vueMemberBind.status === 'bound'" class="position-absolute d-flex flex-column align-items-center justify-content-center text-center p-2" style="top:0;left:0;right:0;bottom:0;background:rgba(25,113,11,0.85);border-radius:4px;">
+						<i class="fal fa-check-circle text-white mb-2" style="font-size:22px;"></i>
+						<div class="text-white small">{{vueMemberBind.statusText}}</div>
+						<div class="text-white small mt-1">{{vueMemberBind.boundEmail}}</div>
+					</div>
+					<!-- 已取消 / 失败：点一下重新出码 -->
+					<div v-if="vueMemberBind.status === 'cancelled' || vueMemberBind.status === 'failed'" @click="theMemberBind.refresh()" class="position-absolute d-flex flex-column align-items-center justify-content-center text-center p-2" style="top:0;left:0;right:0;bottom:0;background:rgba(176,0,32,0.85);border-radius:4px;cursor:pointer;">
+						<i class="fal fa-times-circle text-white mb-2" style="font-size:22px;"></i>
+						<div class="text-white small">{{vueMemberBind.statusText}}</div>
+					</div>
+					<!-- v-if 而非 v-show：d-flex 的 !important 会盖过 v-show 的 display:none -->
+					<div v-if="vueMemberBind.loading" class="position-absolute d-flex align-items-center justify-content-center" style="top:0;left:0;right:0;bottom:0;">
+						<div class="spinner-border spinner-border-sm text-secondary" role="status"></div>
+					</div>
+					<!-- 过期不加遮罩，容器底色已经变淡 -->
+					<div v-if="vueMemberBind.expired" class="position-absolute d-flex flex-column align-items-center justify-content-center" style="top:0;left:0;right:0;bottom:0;">
+						<div class="text-white small mb-2">{{translate_string('QR code expired')}}</div>
+						<button type="button" @click="theMemberBind.refresh()" class="member-bind-refresh-btn">
+							<i class="fal fa-rotate-right"></i>
+						</button>
+					</div>
+				</div>
+			</div>
+		</div>
+	</div>
+</div>
+<!-- ed:modal:bind_app -->
