@@ -7,7 +7,9 @@ set "SaveShaders=1"
 set "SaveSteamData=1"
 set "ICafeHDD=0"
 set "GameSave=1"
+set "GameSaveLimit=1"
 set "GameSaveLimit=0"
+
 
 set "member_account=%~1"
 if not defined member_account goto end_game_save
