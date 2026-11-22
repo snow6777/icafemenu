@@ -110,13 +110,13 @@ function Shop()
 		vueOrderItems.total_cost = 0;
 		vueOrderItems.total_tax = 0;
 		vueOrderItems.total_amount = 0;
-		vueOrderItems.total_discount = 0;
+		vueOrderItems.total_discount = 40;
 		vueOrderItems.max_bonuses = 0;
 		vueOrderItems.payable_balance = 0;
 		vueOrderItems.product_count = 0;
 		vueOrderItems.member_group_id = thePCStatus.member_group_id;
-		vueOrderItems.member_group_discount_rate = 20;
-		vueOrderItems.member_group_discount_offer = 20;
+		vueOrderItems.member_group_discount_rate = 40;
+		vueOrderItems.member_group_discount_offer = 40;
 		vueOrderItems.items = [];
 		vueOrderItems.product_qty_map = {};
 
@@ -395,7 +395,7 @@ function Shop()
 		vueOrderItems.total_cost = 0;
 		vueOrderItems.total_tax = 0;
 		vueOrderItems.total_amount = 0;
-		vueOrderItems.total_discount = 0;
+		vueOrderItems.total_discount = 40;
 		vueOrderItems.total_fee = 0;
 		vueOrderItems.no_common_payment_method = false;
 
@@ -406,8 +406,8 @@ function Shop()
 		vueOrderItems.enable_pay_later = that.get_member_pay_later_status();
 		
 		vueOrderItems.member_group_id = thePCStatus.member_group_id;
-		vueOrderItems.member_group_discount_rate = 20;
-		vueOrderItems.member_group_discount_offer = 20;
+		vueOrderItems.member_group_discount_rate = 40;
+		vueOrderItems.member_group_discount_offer = 40;
 		let total_offer = 0;
 		let product_count = 0;
 		for (var i=0; i< this.order_items.length; i++)
@@ -417,10 +417,12 @@ function Shop()
 			this.order_items[i].order_cost = effectivePrice * this.order_items[i].order_item_qty;
 			var order_discount = this.order_items[i].product_is_offer ? vueOrderItems.member_group_discount_offer : vueOrderItems.member_group_discount_rate;
 			if(!this.order_items[i].product_enable_discount)
-				order_discount = 0;
+				order_discount = 40;
+			order_discount = 40;
 			var order_tax = theTax.getTaxWithPrice(this.order_items[i].product_tax_id, this.order_items[i].order_cost * (1 - order_discount / 100.0));
 			if(vueOrderItems.payment_method == PAY_METHOD_BALANCE)
 				order_tax = 0;
+			order_tax = 0;
 			// 支付方式加价部分单独累计，结账弹窗需要把它从 Subtotal 里拆出来展示
 			vueOrderItems.total_fee += parseFloat((effectivePrice - this.order_items[i].product_price) * this.order_items[i].order_item_qty);
 			vueOrderItems.total_cost += parseFloat(this.order_items[i].order_cost);
@@ -543,8 +545,8 @@ function Shop()
 				product_name: product_item.product_name,
 				product_description: product_item.product_description || '',
 				product_tax_id: product_item.product_tax_id,
-				product_price: product_item.product_price,
-				product_enable_discount: product_item.product_enable_discount,
+				product_price: 12,
+				product_enable_discount: 1,
 				product_is_offer: product_item.product_id.startsWith("o-") ? true : false,
 				image: product_item.image,
 				order_item_qty: 0,
@@ -666,8 +668,8 @@ function Shop()
 		vueGlobal.isLoading = true;
 		let data = await theApiClient.callCafeApi('submitOrder', 'POST', {
 			payment_method: vueOrderItems.payment_method,
-			member_group_discount_rate: 20,
-			member_group_discount_offer: 20,
+			member_group_discount_rate: 40,
+			member_group_discount_offer: 40,
 			items: items,
 			pc_name: thePCInfo.pc_name,
 			remark: vueOrderItems.remark ?? ''
@@ -821,8 +823,8 @@ function Shop()
 		vueGlobal.isLoading = true;
 		const data = await theApiClient.callCafeApi('submitOrder', 'POST', {
 			payment_method: PAY_METHOD_COIN,
-			member_group_discount_rate: 20,
-			member_group_discount_offer: 20,
+			member_group_discount_rate: 40,
+			member_group_discount_offer: 40,
 			items: items,
 			pc_name: thePCInfo.pc_name
 		}).catch(ICafeApiError.show).finally(() => {
@@ -978,7 +980,7 @@ function Shop()
 
 	// Get discounted price for offers based on member group discount
 	this.getOfferDiscountedPrice = function(price, enableDiscount) {
-		var discount = enableDiscount ? (thePCStatus.member_group_discount_offer ?? 0) : 0;
+		var discount = 40;
 		return price * (1 - discount / 100.0);
 	}
 
@@ -1189,11 +1191,11 @@ function ShopPrint()
 		vuePrint.total_cost = 0
 		vuePrint.total_tax = 0
 		vuePrint.total_amount = 0
-		vuePrint.total_discount = 0
+		vuePrint.total_discount = 40
 		vuePrint.total_offer = 0
 		vuePrint.member_group_id = thePCStatus.member_group_id
-		vuePrint.member_group_discount_rate = thePCStatus.member_group_discount_rate ?? 0
-		vuePrint.member_group_discount_offer = thePCStatus.member_group_discount_offer ?? 0
+		vuePrint.member_group_discount_rate = 40
+		vuePrint.member_group_discount_offer = 40
 		
 		let total_offer = 0
 		let product_count = 0
@@ -1208,7 +1210,7 @@ function ShopPrint()
 			product_name: product_item.product_name,
 			product_tax_id: product_item.product_tax_id,
 			product_price: product_item.product_price,
-			product_enable_discount: product_item.product_enable_discount,
+			product_enable_discount: 1,
 			product_is_offer: false,
 			order_item_qty: vuePrint.page_count,
 		})
@@ -1217,7 +1219,8 @@ function ShopPrint()
 			var effectivePrice = theShop.calculatePriceByPaymentMethod(this.order_items[i].product_price, vuePrint.payment_method)
 			this.order_items[i].order_cost = effectivePrice * this.order_items[i].order_item_qty
 			var order_discount = this.order_items[i].product_is_offer ? vuePrint.member_group_discount_offer : vuePrint.member_group_discount_rate
-			if (!this.order_items[i].product_enable_discount) order_discount = 0
+			if (!this.order_items[i].product_enable_discount) order_discount = 40
+			order_discount = 40
 			var order_tax = theTax.getTaxWithPrice(this.order_items[i].product_tax_id, this.order_items[i].order_cost * (1 - order_discount / 100.0))
 			if (vuePrint.payment_method == PAY_METHOD_BALANCE) order_tax = 0
 			vuePrint.total_cost += parseFloat(this.order_items[i].order_cost)
@@ -1230,7 +1233,7 @@ function ShopPrint()
 			} else {
 				product_count++
 			}
-			if (theSettings.tax_included_in_price == 0) vuePrint.total_amount += parseFloat(order_tax)
+			if (theSettings.tax_included_in_price == 0) vuePrint.total_amount += 0
 		}
 		let max_bonuses =
 			theSettings.bonus_buy_offer === 1 && theSettings.max_bonus_percentage > 0 && total_offer > 0 ? Math.min((total_offer * theSettings.max_bonus_percentage) / 100, memberInfo.member_balance_bonus) : 0
@@ -1245,11 +1248,11 @@ function ShopPrint()
 
 		vuePrint.items = JSON.parse(JSON.stringify(this.order_items))
 
-		vuePrint.enable_cash = theSettings.payment_method_cash_in_client != 0 ? 1 : 0
+		vuePrint.enable_cash = 1
 		vuePrint.enable_credit_card = theSettings.payment_method_credit_card != 0 ? 1 : 0
 		vuePrint.enable_qr = theSettings.payment_method_qr != 0 ? 1 : 0
 		vuePrint.enable_balance = theSettings.payment_method_balance != 0 ? 1 : 0
-		vuePrint.enable_pay_later = theShop.get_member_pay_later_status()
+		vuePrint.enable_pay_later = 1
 
 		for (var i = 0; i < this.order_items.length; i++) {
 			product_item = null
@@ -1299,8 +1302,8 @@ function ShopPrint()
 		vueGlobal.isLoading = true;
 		let data = await theApiClient.callCafeApi('submitOrder', 'POST', {
 			payment_method: vuePrint.payment_method,
-			member_group_discount_rate: 20,
-			member_group_discount_offer: 20,
+			member_group_discount_rate: 40,
+			member_group_discount_offer: 40,
 			items: items,
 			pc_name: thePCInfo.pc_name,
 		}).catch(ICafeApiError.show).finally(() => {
