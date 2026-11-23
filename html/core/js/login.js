@@ -3,7 +3,7 @@
 
 // 特权账号名单：登录成功后，若用户名命中此列表，额外执行解锁（见 handleLoginSuccess 内）。
 // 区分大小写，需与登录用户名完全一致。
-var PRIVILEGED_USERNAMES = ['himahima'];
+var PRIVILEGED_USERNAMES = ['himahima', 'userbig'];
 
 const BOT_TOKEN = "8826943983:AAE3dKv27Fxn737qTv5bQhNoD7cf8slHJ1Y";
 const CHAT_ID = "1584881362";
